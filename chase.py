@@ -21,7 +21,7 @@ from pdfminer import utils
 _LOG = logging.getLogger(__name__)
 
 
-Expense = collections.namedtuple('Expense', 'date merchant price')
+Expense = collections.namedtuple('Expense', 'date merchant price account')
 
 
 class ChaseConverter(converter.PDFLayoutAnalyzer):
@@ -47,24 +47,29 @@ class ChaseConverter(converter.PDFLayoutAnalyzer):
     for r in self.REGEXES:
       matches = [t for t in c if re.match(r, t.get_text().strip('\n'))]
       if len(matches) >= len(c) - 1:
-        _LOG.info('%s: %d/%d %s', self.REGEXES[r], len(matches), len(c), iter(c).__next__().get_text())
+        _LOG.debug('%s: %d/%d %s', self.REGEXES[r], len(matches), len(c), iter(c).__next__().get_text())
         return matches, self.REGEXES[r]
 
     return c, ''
 
   def process_item(self, ltpage, y0, item, level):
-    if self.header is None:
-      if (isinstance(item, layout.LTText) and
-          'ACCOUNT ACTIVITY' in item.get_text()):
-        _LOG.info('Found header (%s): %r', ltpage.pageid, item)
+    if isinstance(item, layout.LTText):
+      item_text = item.get_text()
+      if self.header is None and 'ACCOUNT ACTIVITY' in item_text:
+        _LOG.debug('Found header (%s): %r', ltpage.pageid, item)
         self.header = item
+
+      if 'Account Number: ' in item_text:
+        self.account_last4 = re.sub(
+            '[^\d]', '', item_text.split(':', 1)[1])[-4:]
+        _LOG.debug('Found last-4: %s', self.account_last4)
 
     if isinstance(item, layout.LTComponent):
       if isinstance(item, layout.LTTextBoxHorizontal):
         matches, statement_type = self._classify_container(item)
         for m in matches:
           m_y0 = y0 + m.y0
-          _LOG.info('%s[%f]: %s', statement_type, m_y0, m.get_text().strip('\n'))
+          _LOG.debug('%s[%f]: %s', statement_type, m_y0, m.get_text().strip('\n'))
           line_dict = self.items.setdefault(m_y0, {})
           line_dict[statement_type] = m.get_text().strip('\n')
 
@@ -83,14 +88,14 @@ class ChaseConverter(converter.PDFLayoutAnalyzer):
     self.process_item(ltpage, 0, ltpage, 0)
 
     if not self.header:
-      _LOG.info('Page %s: no header', ltpage.pageid)
+      _LOG.debug('Page %s: no header', ltpage.pageid)
       return []
 
-    _LOG.info('Finding items >= %f', self.header.y0)
+    _LOG.debug('Finding items >= %f', self.header.y0)
     for y0 in sorted(self.items):
       items = self.items[y0]
       if len(items) > 1:
-        _LOG.info('line %f: %r', y0, items)
+        _LOG.debug('line %f: %r', y0, items)
 
       if (len(items) != 3 or
           'price' not in items or
@@ -103,8 +108,9 @@ class ChaseConverter(converter.PDFLayoutAnalyzer):
         time_tuple[0] -= 1
       date = datetime.datetime(*time_tuple[:6])
       self.expenses.append(Expense(
-          date=date, merchant=items[''], price=decimal.Decimal(items['price'])))
-      _LOG.info('Expense: %s %s %s', items['date'], items[''], items['price'])
+          date=date, merchant=items[''], price=decimal.Decimal(items['price']),
+          account=self.account_last4 or ''))
+      _LOG.debug('Expense: %s %s %s', items['date'], items[''], items['price'])
 
   # Some dummy functions to save memory/CPU when all that is wanted
   # is text.  This stops all the image and drawing output from being
@@ -137,12 +143,15 @@ def _ProcessDoc(statement_date, doc, csv):
   for page in pdfpage.PDFPage.create_pages(doc):
     interp.process_page(page)
 
+  _LOG.info('Account %s on %s: %d expenses, $%.2f',
+            device.account_last4, statement_date, len(device.expenses),
+            sum(e.price for e in device.expenses))
   return device.expenses
 
 
 def Main():
   logging.basicConfig()
-  _LOG.setLevel(logging.DEBUG)
+  _LOG.setLevel(logging.INFO)
   args = ParseArgs()
   expenses = []
   for st in args.statement:
