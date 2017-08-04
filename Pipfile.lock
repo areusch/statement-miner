@@ -1,0 +1,29 @@
+{
+    "_meta": {
+        "hash": {
+            "sha256": "6268e84f31aa9ae262cc2799dd074a2223fdece15fee6876eedaaac89c79b95a"
+        },
+        "requires": {},
+        "sources": [
+            {
+                "url": "https://pypi.python.org/simple",
+                "verify_ssl": true
+            }
+        ]
+    },
+    "default": {
+        "chardet": {
+            "version": "==3.0.4"
+        },
+        "pdfminer.six": {
+            "version": "==20170720"
+        },
+        "pycryptodome": {
+            "version": "==3.4.6"
+        },
+        "six": {
+            "version": "==1.10.0"
+        }
+    },
+    "develop": {}
+}
